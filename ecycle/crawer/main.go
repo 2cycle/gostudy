@@ -1,20 +1,90 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
+type extractJOB struct {
+	id       string
+	title    string
+	location string
+	salary   string
+	summary  string
+}
+
 var baseURL string = "https://kr.indeed.com/jobs?q=google&limit=50"
 
 func main() {
-
+	var jobs []extractJOB
 	toralPages := getPages()
-	fmt.Println(toralPages)
 
+	for i := 0; i < toralPages; i++ {
+		extractedJobs := getPage(i)
+		jobs = append(jobs, extractedJobs...)
+
+	}
+
+	wirteJobs(jobs)
+	fmt.Println("Done, extracted", len(jobs))
+}
+
+func wirteJobs(jobs []extractJOB) {
+	file, err := os.Create("jobs.csv")
+	checkERR(err)
+
+	w := csv.NewWriter(file)
+	defer w.Flush()
+
+	headers := []string{"ID", "Title", "Location", "Salary", "Summary"}
+	wErr := w.Write(headers)
+	checkERR(wErr)
+
+	for _, job := range jobs {
+		jobSlice := []string{"https://kr.indeed.com/viewjob?jk=" + job.id, job.title, job.location, job.salary, job.summary}
+		jwErr := w.Write(jobSlice)
+		checkERR(jwErr)
+	}
+
+}
+
+func getPage(page int) []extractJOB {
+	var jobs []extractJOB
+	pageURL := baseURL + "&start=" + strconv.Itoa(page*50)
+	//fmt.Println("Request URL is : ", pageURL)
+	res, err := http.Get(pageURL)
+	checkERR(err)
+	checkCode(res)
+
+	defer res.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	checkERR(err)
+
+	searchCards := doc.Find(".jobsearch-SerpJobCard")
+
+	searchCards.Each(func(i int, card *goquery.Selection) {
+		job := makeStructeExtractJob(card)
+		jobs = append(jobs, job)
+	})
+	return jobs
+}
+
+func makeStructeExtractJob(card *goquery.Selection) extractJOB {
+
+	id, _ := card.Attr("data-jk")
+	title := cleanString(card.Find(".title>a").Text())
+	location := cleanString(card.Find(".sjcl").Text())
+	salary := cleanString(card.Find(".salaryTest").Text())
+	summary := cleanString(card.Find(".summary").Text())
+	return extractJOB{id: id, title: title, location: location, salary: salary, summary: summary}
 }
 
 func getPages() int {
@@ -47,4 +117,9 @@ func checkCode(res *http.Response) {
 	if res.StatusCode != 200 {
 		log.Fatalf("status code error: %d %s", res.StatusCode, res.Status)
 	}
+}
+
+func cleanString(str string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(str)), " ")
+
 }
